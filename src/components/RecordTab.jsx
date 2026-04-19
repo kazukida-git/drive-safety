@@ -1,171 +1,156 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
-import { MapContainer, TileLayer, Polyline, Marker, useMap } from 'react-leaflet'
-import L from 'leaflet'
-import 'leaflet/dist/leaflet.css'
-import { calcDistance, formatDuration, formatDistance } from '../utils/storage'
+import { useMemo } from 'react'
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ReferenceLine,
+  CartesianGrid,
+} from 'recharts'
+import { formatDuration, formatDistance } from '../utils/storage'
+import { formatSpeed, getSpeedColor } from '../utils/speed'
 
-// Fix leaflet default marker icon
-delete L.Icon.Default.prototype._getIconUrl
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-})
+export default function RecordTab({
+  recorder,
+  settings,
+  onStart,
+  onStop,
+}) {
+  const {
+    recording,
+    currentSpeed,
+    elapsed,
+    totalDistance,
+    maxSpeed,
+    speedLog,
+    violations,
+  } = recorder
 
-function MapUpdater({ center }) {
-  const map = useMap()
-  useEffect(() => {
-    if (center) map.setView(center, 15)
-  }, [center, map])
-  return null
-}
+  const limit = settings.companySpeedLimit
+  const speedColor = getSpeedColor(currentSpeed, limit)
 
-export default function RecordTab({ onTripComplete }) {
-  const [recording, setRecording] = useState(false)
-  const [route, setRoute] = useState([])
-  const [distance, setDistance] = useState(0)
-  const [startTime, setStartTime] = useState(null)
-  const [elapsed, setElapsed] = useState(0)
-  const [currentPos, setCurrentPos] = useState(null)
-  const [memo, setMemo] = useState('')
-  const watchId = useRef(null)
-  const timerRef = useRef(null)
+  const chartData = useMemo(() => {
+    if (!speedLog || speedLog.length === 0) return []
+    const last = speedLog.slice(-120)
+    const base = last[0].timestamp
+    return last.map((p) => ({
+      t: Math.round((p.timestamp - base) / 1000),
+      speed: Math.round(p.speed * 10) / 10,
+    }))
+  }, [speedLog])
 
-  const handlePosition = useCallback((pos) => {
-    const { latitude, longitude } = pos.coords
-    const point = [latitude, longitude]
-    setCurrentPos(point)
-    setRoute((prev) => {
-      if (prev.length > 0) {
-        const last = prev[prev.length - 1]
-        const d = calcDistance(last[0], last[1], latitude, longitude)
-        if (d > 5) {
-          setDistance((prevD) => prevD + d)
-          return [...prev, point]
-        }
-        return prev
-      }
-      return [point]
-    })
-  }, [])
-
-  const startRecording = () => {
-    if (!navigator.geolocation) {
-      alert('GPS is not supported on this device')
-      return
-    }
-    setRecording(true)
-    setRoute([])
-    setDistance(0)
-    setStartTime(Date.now())
-    setElapsed(0)
-
-    watchId.current = navigator.geolocation.watchPosition(handlePosition, null, {
-      enableHighAccuracy: true,
-      maximumAge: 3000,
-      timeout: 10000,
-    })
-
-    timerRef.current = setInterval(() => {
-      setElapsed((prev) => prev + 1000)
-    }, 1000)
-  }
-
-  const stopRecording = () => {
-    if (watchId.current !== null) {
-      navigator.geolocation.clearWatch(watchId.current)
-      watchId.current = null
-    }
-    if (timerRef.current) {
-      clearInterval(timerRef.current)
-      timerRef.current = null
-    }
-    setRecording(false)
-
-    if (route.length >= 2) {
-      const trip = {
-        id: Date.now(),
-        date: new Date(startTime).toISOString(),
-        route,
-        distance,
-        duration: Date.now() - startTime,
-        memo,
-      }
-      onTripComplete(trip)
-      setMemo('')
-    }
-  }
-
-  useEffect(() => {
-    // Get initial position
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => setCurrentPos([pos.coords.latitude, pos.coords.longitude]),
-        () => setCurrentPos([35.6812, 139.7671]) // Tokyo fallback
-      )
-    }
-    return () => {
-      if (watchId.current !== null) navigator.geolocation.clearWatch(watchId.current)
-      if (timerRef.current) clearInterval(timerRef.current)
-    }
-  }, [])
-
-  const mapCenter = currentPos || [35.6812, 139.7671]
+  const avgSpeed = useMemo(() => {
+    const sec = elapsed / 1000
+    if (sec < 1) return 0
+    return (totalDistance / 1000) / (sec / 3600)
+  }, [elapsed, totalDistance])
 
   return (
     <div className="record-tab">
-      <div className="record-status">
-        <div className="status-row">
-          <div className="status-item">
-            <span className="status-label">走行距離</span>
-            <span className="status-value">{formatDistance(distance)}</span>
-          </div>
-          <div className="status-item">
-            <span className="status-label">走行時間</span>
-            <span className="status-value">{formatDuration(elapsed)}</span>
+      <div className="speed-meter" style={{ borderColor: speedColor }}>
+        <div className="speed-value" style={{ color: speedColor }}>
+          {formatSpeed(currentSpeed)}
+        </div>
+        <div className="speed-unit">km/h</div>
+        <div className="speed-limit-note">制限 {limit} km/h</div>
+      </div>
+
+      <div className="stat-grid">
+        <div className="stat-cell">
+          <div className="stat-cell-label">走行距離</div>
+          <div className="stat-cell-value">{formatDistance(totalDistance)}</div>
+        </div>
+        <div className="stat-cell">
+          <div className="stat-cell-label">走行時間</div>
+          <div className="stat-cell-value">{formatDuration(elapsed)}</div>
+        </div>
+        <div className="stat-cell">
+          <div className="stat-cell-label">最高速度</div>
+          <div className="stat-cell-value">{formatSpeed(maxSpeed)} km/h</div>
+        </div>
+        <div className="stat-cell">
+          <div className="stat-cell-label">平均速度</div>
+          <div className="stat-cell-value">{formatSpeed(avgSpeed)} km/h</div>
+        </div>
+        <div className="stat-cell">
+          <div className="stat-cell-label">違反</div>
+          <div className="stat-cell-value">
+            {violations.length}
+            <span className="stat-cell-sub"> 件</span>
           </div>
         </div>
-
-        {recording && (
-          <div className="recording-indicator">
-            <span className="rec-dot"></span> 記録中...
+        <div className="stat-cell">
+          <div className="stat-cell-label">状態</div>
+          <div className="stat-cell-value">
+            {recording ? (
+              <span className="rec-inline">
+                <span className="rec-dot" /> 記録中
+              </span>
+            ) : (
+              '停止中'
+            )}
           </div>
-        )}
+        </div>
       </div>
 
-      <div className="map-container">
-        <MapContainer
-          center={mapCenter}
-          zoom={15}
-          style={{ height: '300px', width: '100%', borderRadius: '12px' }}
-        >
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-          <MapUpdater center={currentPos} />
-          {currentPos && <Marker position={currentPos} />}
-          {route.length >= 2 && (
-            <Polyline positions={route} color="#3b82f6" weight={4} />
-          )}
-        </MapContainer>
+      <div className="chart-section">
+        <div className="chart-title">タコグラフ（直近2分）</div>
+        <div className="chart-wrap">
+          <ResponsiveContainer width="100%" height={160}>
+            <LineChart data={chartData} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
+              <CartesianGrid stroke="#1f2937" strokeDasharray="3 3" />
+              <XAxis dataKey="t" tick={{ fill: '#9ca3af', fontSize: 10 }} />
+              <YAxis domain={[0, Math.max(limit + 40, 80)]} tick={{ fill: '#9ca3af', fontSize: 10 }} />
+              <Tooltip
+                contentStyle={{ background: '#111827', border: '1px solid #374151' }}
+                labelStyle={{ color: '#9ca3af' }}
+                itemStyle={{ color: '#f9fafb' }}
+                formatter={(v) => [`${v} km/h`, '速度']}
+                labelFormatter={(v) => `${v}s`}
+              />
+              <ReferenceLine y={limit} stroke="#ef4444" strokeDasharray="4 4" />
+              <Line
+                type="monotone"
+                dataKey="speed"
+                stroke="#3b82f6"
+                strokeWidth={2}
+                dot={false}
+                isAnimationActive={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
       </div>
+
+      {violations.length > 0 && (
+        <div className="violation-section">
+          <div className="chart-title">違反ログ</div>
+          <ul className="violation-list">
+            {violations.slice(-5).reverse().map((v, i) => (
+              <li key={`${v.timestamp}-${i}`} className={`violation-item violation-${v.type}`}>
+                <span className="violation-time">
+                  {new Date(v.timestamp).toLocaleTimeString('ja-JP', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                </span>
+                <span className="violation-msg">{v.message}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="record-controls">
-        <input
-          type="text"
-          className="memo-input"
-          placeholder="メモ（行き先・目的など）"
-          value={memo}
-          onChange={(e) => setMemo(e.target.value)}
-        />
         {!recording ? (
-          <button className="btn btn-start" onClick={startRecording}>
-            ▶ 記録開始
+          <button className="btn btn-start" onClick={onStart}>
+            ▶ 業務開始
           </button>
         ) : (
-          <button className="btn btn-stop" onClick={stopRecording}>
-            ⏹ 記録停止
+          <button className="btn btn-stop" onClick={onStop}>
+            ⏹ 業務終了
           </button>
         )}
       </div>

@@ -1,35 +1,67 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import RecordTab from './components/RecordTab'
+import RouteTab from './components/RouteTab'
 import HistoryTab from './components/HistoryTab'
-import StatsTab from './components/StatsTab'
-import { loadTrips, saveTrips } from './utils/storage'
+import SettingsModal from './components/SettingsModal'
+import { useTripRecorder } from './hooks/useTripRecorder'
+import { loadSettings, saveSettings } from './utils/settings'
+import { getAllTrips, deleteTrip as dbDeleteTrip } from './db'
 import './App.css'
 
-function App() {
+export default function App() {
   const [activeTab, setActiveTab] = useState('record')
+  const [settings, setSettings] = useState(loadSettings())
+  const [showSettings, setShowSettings] = useState(false)
   const [trips, setTrips] = useState([])
+  const recorder = useTripRecorder(settings)
+
+  const refreshTrips = async () => {
+    try {
+      const data = await getAllTrips()
+      setTrips(data)
+    } catch (e) {
+      console.error('failed to load trips', e)
+    }
+  }
 
   useEffect(() => {
-    setTrips(loadTrips())
+    refreshTrips()
   }, [])
 
-  const addTrip = (trip) => {
-    const updated = [trip, ...trips]
-    setTrips(updated)
-    saveTrips(updated)
+  const handleStop = async () => {
+    await recorder.stop()
+    await refreshTrips()
+    setActiveTab('history')
+  }
+
+  const handleDelete = async (id) => {
+    await dbDeleteTrip(id)
+    await refreshTrips()
+  }
+
+  const handleSaveSettings = (next) => {
+    setSettings(next)
+    saveSettings(next)
   }
 
   const tabs = [
-    { id: 'record', label: '記録', icon: '📍' },
+    { id: 'record', label: '記録', icon: '🚗' },
+    { id: 'route', label: 'ルート', icon: '🗺' },
     { id: 'history', label: '履歴', icon: '📋' },
-    { id: 'stats', label: '統計', icon: '📊' },
   ]
 
   return (
     <div className="app">
       <header className="app-header">
-        <h1>🚗 Drive Safety</h1>
-        <p className="subtitle">走行記録 & 日報</p>
+        <div className="app-header-inner">
+          <div>
+            <h1>🚗 Drive Safety</h1>
+            <p className="subtitle">運行記録 & 安全管理</p>
+          </div>
+          <button className="settings-btn" onClick={() => setShowSettings(true)} aria-label="設定">
+            ⚙
+          </button>
+        </div>
       </header>
 
       <nav className="tab-nav">
@@ -46,12 +78,29 @@ function App() {
       </nav>
 
       <main className="tab-content">
-        {activeTab === 'record' && <RecordTab onTripComplete={addTrip} />}
-        {activeTab === 'history' && <HistoryTab trips={trips} />}
-        {activeTab === 'stats' && <StatsTab trips={trips} />}
+        {activeTab === 'record' && (
+          <RecordTab
+            recorder={recorder}
+            settings={settings}
+            onStart={recorder.start}
+            onStop={handleStop}
+          />
+        )}
+        {activeTab === 'route' && (
+          <RouteTab recorder={recorder} settings={settings} />
+        )}
+        {activeTab === 'history' && (
+          <HistoryTab trips={trips} onDelete={handleDelete} />
+        )}
       </main>
+
+      {showSettings && (
+        <SettingsModal
+          settings={settings}
+          onSave={handleSaveSettings}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
     </div>
   )
 }
-
-export default App
