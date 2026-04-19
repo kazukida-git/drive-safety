@@ -1,4 +1,4 @@
-const CACHE_NAME = 'drive-safety-v1'
+const CACHE_NAME = 'drive-safety-v3'
 const STATIC_ASSETS = [
   '/',
   '/index.html',
